@@ -1,18 +1,47 @@
 import "server-only";
+import { Prisma, type Environment } from "@prisma/client";
 import { prisma } from "./db";
+
+/**
+ * Highest version first, compared part by part as numbers (1.2.10 > 1.2.9),
+ * then highest build number, then newest upload. `version` and `number` are
+ * free-text columns, so their digits are pulled out rather than cast.
+ */
+const BY_VERSION_DESC = Prisma.sql`
+  ARRAY(
+    SELECT m.v[1]::numeric
+    FROM regexp_matches("version", '([0-9]+)', 'g') WITH ORDINALITY AS m(v, i)
+    ORDER BY m.i
+  ) DESC,
+  NULLIF(regexp_replace("number", '[^0-9]', '', 'g'), '')::numeric DESC NULLS LAST,
+  "createdAt" DESC`;
+
+/** Ids of an app's builds in version order, optionally within one version. */
+async function buildIdsByVersion(
+  applicationId: string,
+  opts: { limit?: number; version?: string; excludeId?: string } = {}
+) {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Build"
+    WHERE "applicationId" = ${applicationId}
+      ${opts.version !== undefined ? Prisma.sql`AND "version" = ${opts.version}` : Prisma.empty}
+      ${opts.excludeId ? Prisma.sql`AND "id" <> ${opts.excludeId}` : Prisma.empty}
+    ORDER BY ${BY_VERSION_DESC}
+    ${opts.limit ? Prisma.sql`LIMIT ${opts.limit}` : Prisma.empty}`;
+  return rows.map((r) => r.id);
+}
+
+/** Loads builds by id and puts them back in the order the ids came in. */
+function inIdOrder<T extends { id: string }>(ids: string[], rows: T[]) {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter((r): r is T => !!r);
+}
 
 export async function listApplications() {
   const [apps, sizeByApp] = await Promise.all([
     prisma.application.findMany({
       orderBy: { name: "asc" },
-      include: {
-        builds: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { number: true, version: true, environment: true },
-        },
-        _count: { select: { builds: true } },
-      },
+      include: { _count: { select: { builds: true } } },
     }),
     prisma.build.groupBy({
       by: ["applicationId"],
@@ -23,17 +52,25 @@ export async function listApplications() {
     sizeByApp.map((s) => [s.applicationId, s._sum.apkSizeBytes ?? BigInt(0)])
   );
 
+  const latestRows = await prisma.$queryRaw<
+    { applicationId: string; number: string; version: string; environment: Environment }[]
+  >`
+    SELECT DISTINCT ON ("applicationId") "applicationId", "number", "version", "environment"
+    FROM "Build"
+    ORDER BY "applicationId", ${BY_VERSION_DESC}`;
+  const latestMap = new Map(latestRows.map(({ applicationId, ...b }) => [applicationId, b]));
+
   return apps.map((app) => ({
     ...app,
     buildCount: app._count.builds,
     usedBytes: sizeMap.get(app.id) ?? BigInt(0),
-    latest: app.builds[0] ?? null,
+    latest: latestMap.get(app.id) ?? null,
   }));
 }
 
 export const BUILD_PAGE_SIZE = 30;
 
-/** App page: the newest `limit` builds, grouped by version, plus the total. */
+/** App page: the top `limit` builds by version, grouped by version, plus the total. */
 export async function getApplicationBySlug(slug: string, limit = BUILD_PAGE_SIZE) {
   const app = await prisma.application.findUnique({
     where: { slug },
@@ -41,18 +78,20 @@ export async function getApplicationBySlug(slug: string, limit = BUILD_PAGE_SIZE
   });
   if (!app) return null;
 
-  const [builds, totalBuilds] = await Promise.all([
-    prisma.build.findMany({
-      where: { applicationId: app.id },
-      orderBy: { createdAt: "desc" },
-      take: limit,
+  const [ids, totalBuilds] = await Promise.all([
+    buildIdsByVersion(app.id, { limit }),
+    prisma.build.count({ where: { applicationId: app.id } }),
+  ]);
+  const builds = inIdOrder(
+    ids,
+    await prisma.build.findMany({
+      where: { id: { in: ids } },
       include: {
         developer: { select: { name: true } },
         _count: { select: { tickets: true } },
       },
-    }),
-    prisma.build.count({ where: { applicationId: app.id } }),
-  ]);
+    })
+  );
 
   const groupsByVersion = new Map<string, typeof builds>();
   for (const b of builds) {
@@ -83,14 +122,16 @@ export async function getNewBuildContext(slug: string) {
   });
   if (!app) return null;
 
-  const [latest, numbers] = await Promise.all([
-    prisma.build.findFirst({
-      where: { applicationId: app.id },
-      orderBy: { createdAt: "desc" },
-      select: { version: true, number: true },
-    }),
+  const [[latestId], numbers] = await Promise.all([
+    buildIdsByVersion(app.id, { limit: 1 }),
     prisma.build.findMany({ where: { applicationId: app.id }, select: { number: true } }),
   ]);
+  const latest = latestId
+    ? await prisma.build.findUnique({
+        where: { id: latestId },
+        select: { version: true, number: true },
+      })
+    : null;
   return { app, latest, existingNumbers: numbers.map((b) => b.number) };
 }
 
@@ -107,15 +148,17 @@ export async function getBuild(slug: string, id: string) {
   });
   if (!build || build.application.slug !== slug) return null;
 
-  const siblings = await prisma.build.findMany({
-    where: {
-      applicationId: build.applicationId,
-      version: build.version,
-      id: { not: build.id },
-    },
-    orderBy: { createdAt: "desc" },
-    include: { developer: { select: { name: true } } },
+  const siblingIds = await buildIdsByVersion(build.applicationId, {
+    version: build.version,
+    excludeId: build.id,
   });
+  const siblings = inIdOrder(
+    siblingIds,
+    await prisma.build.findMany({
+      where: { id: { in: siblingIds } },
+      include: { developer: { select: { name: true } } },
+    })
+  );
 
   return { app: build.application, build, siblings };
 }
@@ -133,15 +176,17 @@ export async function getBuildById(id: string) {
   });
   if (!build) return null;
 
-  const siblings = await prisma.build.findMany({
-    where: {
-      applicationId: build.applicationId,
-      version: build.version,
-      id: { not: build.id },
-    },
-    orderBy: { createdAt: "desc" },
-    include: { developer: { select: { name: true } } },
+  const siblingIds = await buildIdsByVersion(build.applicationId, {
+    version: build.version,
+    excludeId: build.id,
   });
+  const siblings = inIdOrder(
+    siblingIds,
+    await prisma.build.findMany({
+      where: { id: { in: siblingIds } },
+      include: { developer: { select: { name: true } } },
+    })
+  );
 
   return { app: build.application, build, siblings };
 }
