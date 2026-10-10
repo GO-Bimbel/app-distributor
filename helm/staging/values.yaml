@@ -1,4 +1,3 @@
-API_SIGNATURE_SECRET## @params.replicaCount: The desired number of replicas for the Deployment.
 ## This doesnt require if @params.autoscaling.enabled is true
 ##
 replicaCount: 1
@@ -17,7 +16,7 @@ image:
   ## @skip image.tag: image tag (immutable tags are recommended)
   ## Overrides the image tag whose default is the chart appVersion.
   ##
-  tag: staging
+  tag: latest
   ## @params.image.pullPolicy: Specify a imagePullPolicy
   ## Defaults to 'Always' if image tag is 'latest', else set to 'IfNotPresent'
   ##
