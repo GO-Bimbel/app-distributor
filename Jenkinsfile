@@ -96,35 +96,35 @@ pipeline {
             }
         }
 
-        stage('Install Trivy & Scan Image') {
-            when {
-                anyOf {
-                    branch 'main'
-                }
-            }
-            steps {
-                container('dind'){
-                    sh '''
-                    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp
-                    /tmp/trivy image --format template --template "@trivy-report.tpl" -o trivy-report.html ${IMAGE_REPO_NAME}
-                    '''
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-report.html', allowEmptyArchive: true
-                    publishHTML(target: [
-                        allowMissing: true,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: "${WORKSPACE}",
-                        reportFiles: 'trivy-report.html',
-                        reportName: 'Trivy-Report',
-                        reportTitles: 'Trivy-Report'
-                    ])
-                }
-            }
-        }
+        // stage('Install Trivy & Scan Image') {
+        //     when {
+        //         anyOf {
+        //             branch 'main'
+        //         }
+        //     }
+        //     steps {
+        //         container('dind'){
+        //             sh '''
+        //             curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp
+        //             /tmp/trivy image --format template --template "@trivy-report.tpl" -o trivy-report.html ${IMAGE_REPO_NAME}
+        //             '''
+        //         }
+        //     }
+        //     post {
+        //         always {
+        //             archiveArtifacts artifacts: 'trivy-report.html', allowEmptyArchive: true
+        //             publishHTML(target: [
+        //                 allowMissing: true,
+        //                 alwaysLinkToLastBuild: true,
+        //                 keepAll: true,
+        //                 reportDir: "${WORKSPACE}",
+        //                 reportFiles: 'trivy-report.html',
+        //                 reportName: 'Trivy-Report',
+        //                 reportTitles: 'Trivy-Report'
+        //             ])
+        //         }
+        //     }
+        // }
 
         stage('Push Image to Repository') {
             when {
