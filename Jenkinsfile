@@ -79,7 +79,7 @@ pipeline {
                 script {
                     container('dind') {
                         try {
-                            withCredentials([string(credentialsId: 'build-env-staging-new', variable: 'SECRET')]) {
+                            withCredentials([string(credentialsId: 'build-env', variable: 'SECRET')]) {
                                 writeFile file: '.env.base64', text: "${SECRET}"
                                 withEnv(['DOCKER_BUILDKIT=1']) {
                                     app = docker.build("${IMAGE_REPO_NAME}", "--secret id=env,src=.env.base64 .")
