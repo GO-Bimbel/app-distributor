@@ -222,7 +222,7 @@ autoscaling:
       selectPolicy:
 ## @params.volumes: Optionally specify extra list of additional volumes for pods
 ##
-volumes: {}
+volumes: []
 ## @param nodeSelector Node labels for pod assignment. Evaluated as a template.
 ## Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/
 ##
@@ -309,7 +309,7 @@ container:
       type: "RuntimeDefault"
   ## @param volumeMounts Optionally specify extra list of additional volumeMounts for Application container(s)
   ##
-  volumeMounts: {}
+  volumeMounts: []
   ## @param lifecycle LifecycleHooks to set additional configuration at startup
   ##
   lifecycle: {}
