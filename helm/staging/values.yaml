@@ -73,7 +73,8 @@ serviceAccount:
 ## @params.podAnnotations Annotations for Application pods
 ## ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
 ##
-podAnnotations: {}
+podAnnotations:
+  secrets-webhook.security.bank-vaults.io/provider: 'vault'
 ## Configure Pods Security Context
 ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
 ## @params.podSecurityContext.enabled Enabled Application pods' Security Context
@@ -251,7 +252,11 @@ container:
   additionalPort: []
   ## @params.container.env Container Environment Variables
   ##
-  env: []
+  env:
+    - name: DATABASE_URL
+      value: vault:secrets/data/config/db_url#DB_APP_DISTRIBUTOR
+    - name: BASE_URL
+      value: vault:secrets/data/apps/app-distributor#BASE_URL
   ## @params.container.envFrom Container Environment Variable where is from
   ## Recomendded if using secrets and/or configmaps
   ##
