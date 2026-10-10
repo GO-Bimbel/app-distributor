@@ -74,7 +74,6 @@ serviceAccount:
 ## ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
 ##
 podAnnotations:
-  secrets-webhook.security.bank-vaults.io/provider: 'vault'
 ## Configure Pods Security Context
 ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
 ## @params.podSecurityContext.enabled Enabled Application pods' Security Context
