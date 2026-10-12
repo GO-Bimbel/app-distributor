@@ -207,6 +207,27 @@ export async function getAccountEmail(refreshToken: string) {
   return data.user?.emailAddress ?? "Google Drive";
 }
 
+/**
+ * Grants "anyone with the link" read access to the file and returns a URL
+ * that downloads it straight from Google, so the bytes never pass through
+ * our functions. Creating the same `anyone` permission again is a no-op.
+ */
+export async function getPublicDriveDownloadUrl(refreshToken: string, fileId: string) {
+  const accessToken = await getAccessToken(refreshToken);
+  const res = await fetch(`${DRIVE_URL}/files/${fileId}/permissions?fields=id`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ role: "reader", type: "anyone" }),
+  });
+  if (!res.ok) throw new Error(`Drive share failed: ${res.status}`);
+  // confirm=t skips the "can't scan for viruses" interstitial on large files.
+  const params = new URLSearchParams({ id: fileId, export: "download", confirm: "t" });
+  return `https://drive.usercontent.google.com/download?${params}`;
+}
+
 export async function fetchDriveFileStream(refreshToken: string, fileId: string) {
   const accessToken = await getAccessToken(refreshToken);
   const res = await fetch(`${DRIVE_URL}/files/${fileId}?alt=media`, {

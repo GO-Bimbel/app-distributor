@@ -8,7 +8,12 @@ import { prisma } from "@/lib/db";
 import { requirePublisher } from "@/lib/dal";
 import { absoluteUrl } from "@/lib/url";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
-import { presignS3Put, listS3Objects } from "@/lib/storage/s3";
+import {
+  listS3Objects,
+  startS3MultipartUpload,
+  completeS3MultipartUpload,
+  abortS3MultipartUpload,
+} from "@/lib/storage/s3";
 import { postBuildComment, postApkUpdatedComment } from "@/lib/github";
 import { getGithubToken, NO_GITHUB_TOKEN_MESSAGE } from "@/lib/githubToken";
 import { removeStoredObject } from "@/lib/storage/removeObject";
@@ -131,12 +136,29 @@ export type UploadTarget =
   | { ok: true; uploadUrl: string; objectKey?: string; storageConnectionId: string }
   | { ok: false; message: string };
 
-export async function presignS3Upload(
+export type S3UploadTarget =
+  | {
+      ok: true;
+      uploadId: string;
+      partUrls: string[];
+      objectKey: string;
+      storageConnectionId: string;
+    }
+  | { ok: false; message: string };
+
+/** 500 MB APK cap / 5 MiB S3 minimum part size, with headroom. */
+const MAX_S3_PARTS = 200;
+
+export async function startS3Upload(
   applicationId: string,
   filename: string,
-  contentType: string
-): Promise<UploadTarget> {
+  contentType: string,
+  partCount: number
+): Promise<S3UploadTarget> {
   await requirePublisher();
+  if (!Number.isInteger(partCount) || partCount < 1 || partCount > MAX_S3_PARTS) {
+    return { ok: false, message: "Invalid upload size." };
+  }
   const app = await prisma.application.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, message: "Application not found." };
 
@@ -148,12 +170,46 @@ export async function presignS3Upload(
     }
     const creds = JSON.parse(decryptSecret(connection.encryptedCredentials)) as S3Credentials;
     const objectKey = `${app.slug}/${Date.now()}-${filename}`;
-    const uploadUrl = await presignS3Put(creds, objectKey, contentType);
-    return { ok: true, uploadUrl, objectKey, storageConnectionId: connection.id };
+    const { uploadId, partUrls } = await startS3MultipartUpload(creds, objectKey, contentType, partCount);
+    return { ok: true, uploadId, partUrls, objectKey, storageConnectionId: connection.id };
   } catch (err) {
-    console.error("presignS3Upload failed", err);
+    console.error("startS3Upload failed", err);
     return { ok: false, message: storageErrorMessage(err, connection) };
   }
+}
+
+async function s3CredsFor(storageConnectionId: string) {
+  const connection = await prisma.storageConnection.findUnique({ where: { id: storageConnectionId } });
+  if (!connection || connection.provider !== "S3_COMPATIBLE") {
+    throw new Error("S3 storage connection not found.");
+  }
+  return JSON.parse(decryptSecret(connection.encryptedCredentials)) as S3Credentials;
+}
+
+export async function completeS3Upload(
+  storageConnectionId: string,
+  objectKey: string,
+  uploadId: string,
+  partCount: number
+): Promise<StorageResult> {
+  await requirePublisher();
+  return asStorageResult(storageConnectionId, async () => {
+    await completeS3MultipartUpload(await s3CredsFor(storageConnectionId), objectKey, uploadId, partCount);
+    return {};
+  });
+}
+
+/** Best effort: frees the parts already stored when an upload is given up. */
+export async function abortS3Upload(
+  storageConnectionId: string,
+  objectKey: string,
+  uploadId: string
+): Promise<StorageResult> {
+  await requirePublisher();
+  return asStorageResult(storageConnectionId, async () => {
+    await abortS3MultipartUpload(await s3CredsFor(storageConnectionId), objectKey, uploadId);
+    return {};
+  });
 }
 
 export async function createGDriveUploadSession(

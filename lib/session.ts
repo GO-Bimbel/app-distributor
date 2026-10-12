@@ -64,3 +64,49 @@ export async function deleteSession() {
 }
 
 export { COOKIE_NAME };
+
+// Short-lived token issued after a user with a null passwordHash signs in with
+// their email. It only authorizes /reset-password. Signed with a derived key so
+// it can never be accepted as a regular session cookie.
+const RESET_COOKIE_NAME = "buildapp_password_reset";
+const RESET_DURATION_MS = 15 * 60 * 1000;
+
+function resetKey() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET environment variable is not set");
+  return new TextEncoder().encode(`${secret}:password-reset`);
+}
+
+export async function createResetSession(userId: string) {
+  const expiresAt = Date.now() + RESET_DURATION_MS;
+  const token = await new SignJWT({ userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("15m")
+    .sign(resetKey());
+  const cookieStore = await cookies();
+  cookieStore.set(RESET_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: new Date(expiresAt),
+    path: "/",
+  });
+}
+
+export async function getResetUserId(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(RESET_COOKIE_NAME)?.value;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, resetKey(), { algorithms: ["HS256"] });
+    return typeof payload.userId === "string" ? payload.userId : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteResetSession() {
+  const cookieStore = await cookies();
+  cookieStore.delete(RESET_COOKIE_NAME);
+}

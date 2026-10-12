@@ -1,14 +1,26 @@
 import * as z from "zod";
 
+const PasswordSchema = z
+  .string()
+  .min(8, "Be at least 8 characters long.")
+  .regex(/[a-zA-Z]/, "Contain at least one letter.")
+  .regex(/[0-9]/, "Contain at least one number.");
+
 export const SignupFormSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters long.").trim(),
   email: z.email("Please enter a valid email.").trim(),
-  password: z
-    .string()
-    .min(8, "Be at least 8 characters long.")
-    .regex(/[a-zA-Z]/, "Contain at least one letter.")
-    .regex(/[0-9]/, "Contain at least one number."),
+  password: PasswordSchema,
 });
+
+export const ResetPasswordFormSchema = z
+  .object({
+    password: PasswordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.password === d.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
 
 export const LoginFormSchema = z.object({
   email: z.email("Please enter a valid email.").trim(),

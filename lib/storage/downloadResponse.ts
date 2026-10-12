@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import type { Build, StorageConnection } from "@prisma/client";
 import { decryptSecret } from "@/lib/crypto";
 import { presignS3Get, type S3Credentials } from "@/lib/storage/s3";
-import { fetchDriveFileStream, DriveAccessRevokedError } from "@/lib/storage/gdrive";
+import { fetchDriveFileStream, getPublicDriveDownloadUrl, DriveAccessRevokedError } from "@/lib/storage/gdrive";
 import { attachmentDisposition } from "@/lib/format";
 
 /** Cookie the DownloadButton polls for to learn the file has started arriving. */
@@ -48,9 +48,8 @@ export async function downloadResponse(req: Request, build: DownloadableBuild) {
     res = NextResponse.redirect(url);
   } else {
     const { refreshToken } = JSON.parse(secret) as { refreshToken: string };
-    let upstream: Response;
     try {
-      upstream = await fetchDriveFileStream(refreshToken, build.storageObjectKey);
+      res = await driveResponse(refreshToken, build.storageObjectKey, build.apkFileName);
     } catch (err) {
       console.error("download: Drive fetch failed", err);
       return err instanceof DriveAccessRevokedError
@@ -67,15 +66,6 @@ export async function downloadResponse(req: Request, build: DownloadableBuild) {
             "Google Drive didn't return the file. Try again in a minute; if it keeps failing, let the team know."
           );
     }
-    const headers = new Headers({
-      "Content-Type":
-        upstream.headers.get("content-type") ?? "application/vnd.android.package-archive",
-      "Content-Disposition": attachmentDisposition(build.apkFileName ?? "build.apk"),
-    });
-    // Lets the browser show real progress and time remaining.
-    const length = upstream.headers.get("content-length");
-    if (length) headers.set("Content-Length", length);
-    res = new NextResponse(upstream.body, { headers });
   }
 
   const dl = new URL(req.url).searchParams.get("dl");
@@ -83,4 +73,28 @@ export async function downloadResponse(req: Request, build: DownloadableBuild) {
     res.cookies.set(`${DOWNLOAD_COOKIE_PREFIX}${dl}`, "1", { path: "/", maxAge: 60, sameSite: "lax" });
   }
   return res;
+}
+
+/**
+ * Redirects to a public Drive download link so the APK bytes skip Vercel's
+ * Fast Origin Transfer. Proxies the file instead when the link can't be
+ * created (e.g. a Workspace policy that forbids link sharing).
+ */
+async function driveResponse(refreshToken: string, fileId: string, apkFileName: string | null) {
+  try {
+    return NextResponse.redirect(await getPublicDriveDownloadUrl(refreshToken, fileId));
+  } catch (err) {
+    if (err instanceof DriveAccessRevokedError) throw err;
+    console.error("download: Drive public link failed, proxying instead", err);
+  }
+  const upstream = await fetchDriveFileStream(refreshToken, fileId);
+  const headers = new Headers({
+    "Content-Type":
+      upstream.headers.get("content-type") ?? "application/vnd.android.package-archive",
+    "Content-Disposition": attachmentDisposition(apkFileName ?? "build.apk"),
+  });
+  // Lets the browser show real progress and time remaining.
+  const length = upstream.headers.get("content-length");
+  if (length) headers.set("Content-Length", length);
+  return new NextResponse(upstream.body, { headers });
 }

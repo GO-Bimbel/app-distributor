@@ -80,10 +80,31 @@ export async function updateApplication(
   redirect("/storage");
 }
 
-export async function deleteApplication(formData: FormData) {
+export type DeleteApplicationState = { message?: string } | undefined;
+
+export async function deleteApplication(
+  _prev: DeleteApplicationState,
+  formData: FormData
+): Promise<DeleteApplicationState> {
   await requirePublisher();
   const id = String(formData.get("id"));
-  await prisma.application.delete({ where: { id } });
+
+  // Builds reference the app with ON DELETE RESTRICT; say so instead of
+  // letting the delete throw a bare constraint error.
+  const buildCount = await prisma.build.count({ where: { applicationId: id } });
+  if (buildCount > 0) {
+    return {
+      message: `This app still has ${buildCount} build${buildCount === 1 ? "" : "s"}. Delete them first.`,
+    };
+  }
+
+  try {
+    await prisma.application.delete({ where: { id } });
+  } catch (err) {
+    // A build published between the count and the delete trips the constraint.
+    console.error(`deleteApplication failed for ${id}`, err);
+    return { message: "Couldn't delete this app — it may have just gained a build. Try again." };
+  }
   revalidatePath("/storage");
   revalidatePath("/apps");
 }

@@ -218,16 +218,7 @@ export function ManageAppsDialog({ apps }: { apps: App[] }) {
                       </span>
 
                       {deleting === app.id ? (
-                        <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 12, color: "var(--danger)" }}>Delete?</span>
-                          <form action={deleteApplication}>
-                            <input type="hidden" name="id" value={app.id} />
-                            <SubmitButton variant="danger" size="sm" pendingLabel="Deleting…">Yes</SubmitButton>
-                          </form>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => setDeleting(null)}>
-                            No
-                          </Button>
-                        </span>
+                        <DeleteAppConfirm appId={app.id} onCancel={() => setDeleting(null)} />
                       ) : (
                         <span style={{ display: "flex", gap: 6 }}>
                           <Button
@@ -290,5 +281,29 @@ export function ManageAppsDialog({ apps }: { apps: App[] }) {
         </div>
       )}
     </>
+  );
+}
+
+function DeleteAppConfirm({ appId, onCancel }: { appId: string; onCancel: () => void }) {
+  const [state, action] = useActionState(deleteApplication, undefined);
+
+  return (
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "var(--danger)" }}>Delete?</span>
+        <form action={action}>
+          <input type="hidden" name="id" value={appId} />
+          <SubmitButton variant="danger" size="sm" pendingLabel="Deleting…">Yes</SubmitButton>
+        </form>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          No
+        </Button>
+      </span>
+      {state?.message && (
+        <span role="alert" style={{ fontSize: 12, color: "var(--danger)", maxWidth: 260, textAlign: "right" }}>
+          {state.message}
+        </span>
+      )}
+    </span>
   );
 }
