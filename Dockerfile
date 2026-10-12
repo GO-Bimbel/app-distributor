@@ -43,6 +43,8 @@ COPY --chown=node:node --from=builder /app/package.json ./package.json
 COPY --chown=node:node --from=builder /app/next.config.ts ./next.config.ts
 COPY --chown=node:node --from=builder /app/.env ./.env
 COPY --chown=node:node --from=builder /app/public ./public
+# Fonts read at runtime by app/share/[token]/opengraph-image.tsx
+COPY --chown=node:node --from=builder /app/assets ./assets
 COPY --chown=node:node --from=builder /app/.next ./.next
 COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 
