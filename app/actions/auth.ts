@@ -3,8 +3,19 @@
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { createSession, deleteSession } from "@/lib/session";
-import { SignupFormSchema, LoginFormSchema, type FormState } from "@/app/lib/definitions";
+import {
+  createSession,
+  deleteSession,
+  createResetSession,
+  getResetUserId,
+  deleteResetSession,
+} from "@/lib/session";
+import {
+  SignupFormSchema,
+  LoginFormSchema,
+  ResetPasswordFormSchema,
+  type FormState,
+} from "@/app/lib/definitions";
 
 export async function signup(_state: FormState, formData: FormData): Promise<FormState> {
   const validated = SignupFormSchema.safeParse({
@@ -46,10 +57,56 @@ export async function login(_state: FormState, formData: FormData): Promise<Form
   const { email, password } = validated.data;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+  if (!user) {
     return { message: "Invalid email or password." };
   }
 
+  // Password was reset (passwordHash set to null): the email itself is the
+  // one-time password, after which the user must choose a new one.
+  if (user.passwordHash === null) {
+    if (password.trim().toLowerCase() !== user.email.toLowerCase()) {
+      return { message: "Invalid email or password." };
+    }
+    await createResetSession(user.id);
+    redirect("/reset-password");
+  }
+
+  if (!(await bcrypt.compare(password, user.passwordHash))) {
+    return { message: "Invalid email or password." };
+  }
+
+  await createSession(user.id, user.role);
+  redirect("/");
+}
+
+export async function resetPassword(_state: FormState, formData: FormData): Promise<FormState> {
+  const userId = await getResetUserId();
+  if (!userId) {
+    redirect("/login");
+  }
+
+  const validated = ResetPasswordFormSchema.safeParse({
+    password: formData.get("password"),
+    confirmPassword: formData.get("confirmPassword"),
+  });
+
+  if (!validated.success) {
+    return { errors: validated.error.flatten().fieldErrors };
+  }
+
+  const passwordHash = await bcrypt.hash(validated.data.password, 10);
+  // Only succeeds while the password is still unset, so a leftover reset
+  // cookie can't overwrite a password the user has already chosen.
+  const { count } = await prisma.user.updateMany({
+    where: { id: userId, passwordHash: null },
+    data: { passwordHash },
+  });
+  await deleteResetSession();
+  if (count === 0) {
+    redirect("/login");
+  }
+
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   await createSession(user.id, user.role);
   redirect("/");
 }

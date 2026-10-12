@@ -14,7 +14,16 @@ export async function POST(req: Request) {
 
   const { email, password } = validated.data;
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+  if (user && user.passwordHash === null && password.trim().toLowerCase() === user.email.toLowerCase()) {
+    return NextResponse.json(
+      {
+        error: "Your password was reset. Sign in on the web to set a new password.",
+        code: "PASSWORD_RESET_REQUIRED",
+      },
+      { status: 403 }
+    );
+  }
+  if (!user || !user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }
 
